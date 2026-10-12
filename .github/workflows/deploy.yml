@@ -1,0 +1,65 @@
+name: Deploy slides to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      BASE: /${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build slides (SPA)
+        run: npx slidev build --base "$BASE"
+
+      # Fail if an asset path was not prefixed with the base path (it would 404 on Pages)
+      - name: Check asset paths
+        run: |
+          if grep -rEo "[\"'(]/(figures|fonts|data)/[^\"')]*|[\"'(]/(title\.png|fzj\.svg)" dist --include='*.js' --include='*.css' --include='*.html'; then
+            echo "::error::Asset paths without base prefix found (see above)"; exit 1
+          fi
+
+      - name: Export PDF
+        run: |
+          npx playwright install --with-deps chromium
+          npx slidev export --output dist/stencils-at-memory-speed.pdf --timeout 60000
+
+      # history-mode routing: deep links like /<repo>/12 must fall back to the app
+      - run: cp dist/index.html dist/404.html
+
+      # Pages must be enabled once by hand: Settings → Pages → Source: GitHub Actions
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
